@@ -1,0 +1,476 @@
+import numpy as np
+
+ROWS = 3
+COLS = 5
+
+START = (0, 0)
+GOAL = (0, 4)
+
+OBSTACLES = {
+    (0, 3),
+    (1, 1),
+    (1, 3)
+}
+
+# ------------------------------------------------------------
+# 1. Define states
+# ------------------------------------------------------------
+
+states = []
+
+for r in range(ROWS):
+    for c in range(COLS):
+
+        position = (r, c)
+
+        if position not in OBSTACLES:
+            states.append(position)
+
+print("STATES")
+print("-" * 40)
+
+for i, state in enumerate(states):
+    print(i, ":", state)
+
+
+# Give every state a numerical index
+state_to_index = {
+    state: i for i, state in enumerate(states)
+}
+
+index_to_state = {
+    i: state for i, state in enumerate(states)
+}
+
+
+# ------------------------------------------------------------
+# 2. Define actions
+# ------------------------------------------------------------
+
+actions = {
+    "UP": (-1, 0),
+    "DOWN": (1, 0),
+    "LEFT": (0, -1),
+    "RIGHT": (0, 1)
+}
+
+action_names = list(actions.keys())
+
+print("\nACTIONS")
+print("-" * 40)
+
+for action in action_names:
+    print(action)
+
+
+# ------------------------------------------------------------
+# 3. Define transition probabilities
+# ------------------------------------------------------------
+
+# The robot is assumed to move correctly with probability 0.8.
+# With probability 0.1 it moves perpendicular to the intended
+# direction in either direction.
+#
+# Example:
+#
+# RIGHT:
+#   RIGHT -> 0.8
+#   UP    -> 0.1
+#   DOWN  -> 0.1
+#
+# If a movement hits a wall or obstacle, the robot remains
+# in its current state.
+
+transition_probabilities = {
+    "UP": {
+        "UP": 0.8,
+        "LEFT": 0.1,
+        "RIGHT": 0.1
+    },
+
+    "DOWN": {
+        "DOWN": 0.8,
+        "LEFT": 0.1,
+        "RIGHT": 0.1
+    },
+
+    "LEFT": {
+        "LEFT": 0.8,
+        "UP": 0.1,
+        "DOWN": 0.1
+    },
+
+    "RIGHT": {
+        "RIGHT": 0.8,
+        "UP": 0.1,
+        "DOWN": 0.1
+    }
+}
+
+
+# ------------------------------------------------------------
+# Function to move robot
+# ------------------------------------------------------------
+
+def move(state, action):
+
+    r, c = state
+
+    dr, dc = actions[action]
+
+    new_position = (
+        r + dr,
+        c + dc
+    )
+
+    # Check boundary
+    if not (
+        0 <= new_position[0] < ROWS
+        and
+        0 <= new_position[1] < COLS
+    ):
+        return state
+
+    # Check obstacle
+    if new_position in OBSTACLES:
+        return state
+
+    return new_position
+
+
+# ------------------------------------------------------------
+# 4. Define reward function
+# ------------------------------------------------------------
+
+def reward(state, action, next_state):
+
+    # Goal reached
+    if next_state == GOAL:
+        return 100
+
+    # Collision with wall or obstacle
+    if next_state == state:
+        return -5
+
+    # Normal movement
+    return -1
+
+
+# ------------------------------------------------------------
+# 5. Build transition model
+# ------------------------------------------------------------
+
+def get_transition(state, intended_action):
+
+    transitions = []
+
+    possible_actions = transition_probabilities[
+        intended_action
+    ]
+
+    for actual_action, probability in possible_actions.items():
+
+        next_state = move(
+            state,
+            actual_action
+        )
+
+        transitions.append(
+            (
+                probability,
+                next_state,
+                reward(
+                    state,
+                    intended_action,
+                    next_state
+                )
+            )
+        )
+
+    return transitions
+
+
+# ------------------------------------------------------------
+# Display transition probabilities
+# ------------------------------------------------------------
+
+print("\nTRANSITION MODEL")
+print("-" * 60)
+
+for state in states:
+
+    if state == GOAL:
+        continue
+
+    print(f"\nCurrent State: {state}")
+
+    for action in action_names:
+
+        print(f"  Action: {action}")
+
+        transitions = get_transition(
+            state,
+            action
+        )
+
+        for probability, next_state, r in transitions:
+
+            print(
+                f"    P={probability:.1f} "
+                f"-> {next_state}, "
+                f"Reward={r}"
+            )
+
+
+# ============================================================
+# 6. VALUE ITERATION
+# ============================================================
+
+# Discount factor
+gamma = 0.90
+
+# Initialize value function
+V = {
+    state: 0.0
+    for state in states
+}
+
+# Goal has zero future value because it is terminal
+V[GOAL] = 0.0
+
+
+# ------------------------------------------------------------
+# Value Iteration
+# ------------------------------------------------------------
+
+iterations = 100
+
+for iteration in range(iterations):
+
+    new_V = V.copy()
+
+    for state in states:
+
+        # Goal is terminal
+        if state == GOAL:
+            continue
+
+        action_values = []
+
+        for action in action_names:
+
+            expected_value = 0.0
+
+            transitions = get_transition(
+                state,
+                action
+            )
+
+            for probability, next_state, r in transitions:
+
+                expected_value += probability * (
+                    r +
+                    gamma * V[next_state]
+                )
+
+            action_values.append(
+                expected_value
+            )
+
+        new_V[state] = max(action_values)
+
+    # Check convergence
+    difference = max(
+        abs(new_V[state] - V[state])
+        for state in states
+    )
+
+    V = new_V
+
+    if difference < 0.001:
+        print(
+            f"\nValue iteration converged "
+            f"after {iteration + 1} iterations."
+        )
+        break
+
+
+# ============================================================
+# 7. Extract optimal policy
+# ============================================================
+
+policy = {}
+
+for state in states:
+
+    if state == GOAL:
+
+        policy[state] = "GOAL"
+        continue
+
+    best_action = None
+    best_value = float("-inf")
+
+    for action in action_names:
+
+        expected_value = 0.0
+
+        transitions = get_transition(
+            state,
+            action
+        )
+
+        for probability, next_state, r in transitions:
+
+            expected_value += probability * (
+                r +
+                gamma * V[next_state]
+            )
+
+        if expected_value > best_value:
+
+            best_value = expected_value
+            best_action = action
+
+    policy[state] = best_action
+
+
+# ============================================================
+# 8. Display optimal value function
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("OPTIMAL VALUE FUNCTION")
+print("=" * 60)
+
+for state in states:
+
+    print(
+        f"State {state}: "
+        f"V = {V[state]:.3f}"
+    )
+
+
+# ============================================================
+# 9. Display optimal policy
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("OPTIMAL POLICY")
+print("=" * 60)
+
+for r in range(ROWS):
+
+    row = []
+
+    for c in range(COLS):
+
+        position = (r, c)
+
+        if position in OBSTACLES:
+
+            row.append(" X ")
+
+        elif position == GOAL:
+
+            row.append(" G ")
+
+        else:
+
+            action = policy[position]
+
+            symbols = {
+                "UP": " ↑ ",
+                "DOWN": " ↓ ",
+                "LEFT": " ← ",
+                "RIGHT": " → "
+            }
+
+            row.append(
+                symbols[action]
+            )
+
+    print(" ".join(row))
+
+
+# ============================================================
+# 10. Simulate robot following optimal policy
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("ROBOT NAVIGATION USING OPTIMAL POLICY")
+print("=" * 60)
+
+current_state = START
+
+print("Start:", current_state)
+
+visited = [current_state]
+
+for step in range(20):
+
+    if current_state == GOAL:
+        break
+
+    action = policy[current_state]
+
+    # For simulation, use the most probable intended action
+    next_state = move(
+        current_state,
+        action
+    )
+
+    print(
+        f"Step {step + 1}: "
+        f"State={current_state}, "
+        f"Action={action}, "
+        f"Next State={next_state}"
+    )
+
+    current_state = next_state
+
+    visited.append(current_state)
+
+    if current_state == GOAL:
+
+        print(
+            "\nRobot successfully reached "
+            "the delivery destination!"
+        )
+
+        break
+
+else:
+
+    print(
+        "\nRobot could not reach the destination."
+    )
+
+
+# ============================================================
+# Final Result
+# ============================================================
+
+print("\n")
+print("=" * 60)
+print("RESULT")
+print("=" * 60)
+
+print(
+    "The MDP was successfully designed for the "
+    "autonomous warehouse robot."
+)
+
+print(
+    "The optimal policy was obtained using "
+    "Value Iteration."
+)
+
+print(
+    "The policy guides the robot from the starting "
+    "position toward the delivery destination "
+    "while avoiding obstacles."
+)
