@@ -1,0 +1,682 @@
+import random
+from collections import defaultdict
+
+# ============================================================
+# Simplified Chess Environment
+# ============================================================
+
+class SimplifiedChess:
+    """
+    Board:
+        4 x 4 simplified chess board
+
+    Pieces:
+        Agent: King + Rook
+        Opponent: King
+
+    Goal:
+        Agent must checkmate the opponent king.
+
+    MDP Components:
+        State       -> Board configuration
+        Action      -> Legal move
+        Transition  -> New board configuration
+        Reward      -> +10 win, -10 loss, -0.1 per move
+    """
+
+    SIZE = 4
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        # Positions represented as (row, column)
+        self.agent_king = (3, 0)
+        self.agent_rook = (2, 0)
+        self.enemy_king = (0, 3)
+
+        self.done = False
+        self.turn = "agent"
+
+        return self.get_state()
+
+    # --------------------------------------------------------
+    # Convert board position to a compact state
+    # --------------------------------------------------------
+
+    def get_state(self):
+        return (
+            self.agent_king,
+            self.agent_rook,
+            self.enemy_king,
+            self.turn
+        )
+
+    # --------------------------------------------------------
+    # Check whether a position is inside the board
+    # --------------------------------------------------------
+
+    def valid_position(self, position):
+        r, c = position
+        return 0 <= r < self.SIZE and 0 <= c < self.SIZE
+
+    # --------------------------------------------------------
+    # Check whether two kings are adjacent
+    # --------------------------------------------------------
+
+    def kings_adjacent(self, pos1, pos2):
+        return max(
+            abs(pos1[0] - pos2[0]),
+            abs(pos1[1] - pos2[1])
+        ) <= 1
+
+    # --------------------------------------------------------
+    # Generate legal moves for the agent
+    # --------------------------------------------------------
+
+    def get_agent_actions(self):
+        actions = []
+
+        # -------------------------
+        # King moves
+        # -------------------------
+
+        king_r, king_c = self.agent_king
+
+        king_directions = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1)
+        ]
+
+        for dr, dc in king_directions:
+
+            new_pos = (
+                king_r + dr,
+                king_c + dc
+            )
+
+            if not self.valid_position(new_pos):
+                continue
+
+            # King cannot move onto rook
+            if new_pos == self.agent_rook:
+                continue
+
+            # King cannot move next to enemy king
+            if self.kings_adjacent(
+                new_pos,
+                self.enemy_king
+            ):
+                continue
+
+            actions.append(
+                ("K", new_pos)
+            )
+
+        # -------------------------
+        # Rook moves
+        # -------------------------
+
+        rook_r, rook_c = self.agent_rook
+
+        rook_directions = [
+            (-1, 0),
+            (1, 0),
+            (0, -1),
+            (0, 1)
+        ]
+
+        for dr, dc in rook_directions:
+
+            r = rook_r + dr
+            c = rook_c + dc
+
+            while self.valid_position((r, c)):
+
+                position = (r, c)
+
+                # Rook cannot move onto own king
+                if position == self.agent_king:
+                    break
+
+                # Rook can capture enemy king.
+                # In this simplified environment,
+                # capturing the king means winning.
+                actions.append(
+                    ("R", position)
+                )
+
+                if position == self.enemy_king:
+                    break
+
+                r += dr
+                c += dc
+
+        return actions
+
+    # --------------------------------------------------------
+    # Generate opponent moves
+    # --------------------------------------------------------
+
+    def get_enemy_actions(self):
+
+        actions = []
+
+        r, c = self.enemy_king
+
+        directions = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1),           (0, 1),
+            (1, -1),  (1, 0),  (1, 1)
+        ]
+
+        for dr, dc in directions:
+
+            new_pos = (
+                r + dr,
+                c + dc
+            )
+
+            if not self.valid_position(new_pos):
+                continue
+
+            # Cannot move onto agent king
+            if new_pos == self.agent_king:
+                continue
+
+            # Cannot move onto rook
+            # (except when capturing it)
+            actions.append(
+                ("E", new_pos)
+            )
+
+        return actions
+
+    # --------------------------------------------------------
+    # Check if rook attacks enemy king
+    # --------------------------------------------------------
+
+    def rook_attacks_king(self):
+
+        rr, rc = self.agent_rook
+        er, ec = self.enemy_king
+
+        # Same row
+        if rr == er:
+
+            # Check whether agent king blocks the rook
+            kr, kc = self.agent_king
+
+            if kr == rr:
+                if min(rc, ec) < kc < max(rc, ec):
+                    return False
+
+            return True
+
+        # Same column
+        if rc == ec:
+
+            kr, kc = self.agent_king
+
+            if kc == rc:
+                if min(rr, er) < kr < max(rr, er):
+                    return False
+
+            return True
+
+        return False
+
+    # --------------------------------------------------------
+    # Check whether enemy king is in check
+    # --------------------------------------------------------
+
+    def is_check(self):
+        return self.rook_attacks_king()
+
+    # --------------------------------------------------------
+    # Checkmate condition
+    # --------------------------------------------------------
+
+    def is_checkmate(self):
+
+        if not self.is_check():
+            return False
+
+        enemy_moves = self.get_enemy_actions()
+
+        # Remove moves that move into rook attack
+        safe_moves = []
+
+        original = self.enemy_king
+
+        for action in enemy_moves:
+
+            new_position = action[1]
+
+            # Cannot move next to agent king
+            if self.kings_adjacent(
+                new_position,
+                self.agent_king
+            ):
+                continue
+
+            # Simulate enemy king position
+            self.enemy_king = new_position
+
+            if not self.rook_attacks_king():
+                safe_moves.append(action)
+
+        self.enemy_king = original
+
+        return len(safe_moves) == 0
+
+    # --------------------------------------------------------
+    # Execute agent action
+    # --------------------------------------------------------
+
+    def step(self, action):
+
+        reward = -0.1
+
+        piece, position = action
+
+        # -------------------------
+        # Agent King move
+        # -------------------------
+
+        if piece == "K":
+
+            self.agent_king = position
+
+        # -------------------------
+        # Agent Rook move
+        # -------------------------
+
+        elif piece == "R":
+
+            self.agent_rook = position
+
+            # Capturing enemy king = WIN
+            if position == self.enemy_king:
+
+                self.done = True
+                reward = 10
+
+                return self.get_state(), reward, True
+
+        # Checkmate
+        if self.is_checkmate():
+
+            self.done = True
+            reward = 10
+
+            return self.get_state(), reward, True
+
+        # ----------------------------------------------------
+        # Opponent's turn
+        # ----------------------------------------------------
+
+        enemy_moves = self.get_enemy_actions()
+
+        if len(enemy_moves) == 0:
+
+            self.done = True
+            reward = 10
+
+            return self.get_state(), reward, True
+
+        # Opponent chooses a random legal move
+        enemy_action = random.choice(enemy_moves)
+
+        self.enemy_king = enemy_action[1]
+
+        # Opponent captures rook
+        if self.enemy_king == self.agent_rook:
+
+            self.done = True
+            reward = -10
+
+            return self.get_state(), reward, True
+
+        # Opponent can put itself into check in this
+        # simplified environment, but the agent still
+        # receives the state and continues learning.
+
+        return self.get_state(), reward, False
+
+    # --------------------------------------------------------
+    # Display board
+    # --------------------------------------------------------
+
+    def display(self):
+
+        print("\n  0 1 2 3")
+        print("  --------")
+
+        for r in range(self.SIZE):
+
+            row = []
+
+            for c in range(self.SIZE):
+
+                position = (r, c)
+
+                if position == self.agent_king:
+                    row.append("K")
+
+                elif position == self.agent_rook:
+                    row.append("R")
+
+                elif position == self.enemy_king:
+                    row.append("E")
+
+                else:
+                    row.append(".")
+
+            print(r, " ".join(row))
+
+        print("\nK = Agent King")
+        print("R = Agent Rook")
+        print("E = Enemy King")
+
+
+# ============================================================
+# Q-Learning Agent
+# ============================================================
+
+class QLearningAgent:
+
+    def __init__(
+        self,
+        learning_rate=0.1,
+        discount_factor=0.95,
+        epsilon=1.0,
+        epsilon_decay=0.995,
+        epsilon_min=0.05
+    ):
+
+        self.q_table = defaultdict(float)
+
+        self.alpha = learning_rate
+        self.gamma = discount_factor
+
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.epsilon_min = epsilon_min
+
+    # --------------------------------------------------------
+    # Choose action using epsilon-greedy policy
+    # --------------------------------------------------------
+
+    def choose_action(self, state, actions):
+
+        if not actions:
+            return None
+
+        # Exploration
+        if random.random() < self.epsilon:
+
+            return random.choice(actions)
+
+        # Exploitation
+        q_values = [
+            self.q_table[(state, action)]
+            for action in actions
+        ]
+
+        max_q = max(q_values)
+
+        best_actions = [
+            action
+            for action, q in zip(actions, q_values)
+            if q == max_q
+        ]
+
+        return random.choice(best_actions)
+
+    # --------------------------------------------------------
+    # Q-Learning update
+    # --------------------------------------------------------
+
+    def learn(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        next_actions,
+        done
+    ):
+
+        current_q = self.q_table[
+            (state, action)
+        ]
+
+        if done:
+
+            target = reward
+
+        else:
+
+            if next_actions:
+
+                max_next_q = max(
+                    self.q_table[
+                        (next_state, next_action)
+                    ]
+                    for next_action in next_actions
+                )
+
+            else:
+
+                max_next_q = 0
+
+            target = reward + self.gamma * max_next_q
+
+        # Q-learning formula
+        self.q_table[
+            (state, action)
+        ] = current_q + self.alpha * (
+            target - current_q
+        )
+
+    # --------------------------------------------------------
+    # Reduce exploration
+    # --------------------------------------------------------
+
+    def decay_epsilon(self):
+
+        self.epsilon = max(
+            self.epsilon_min,
+            self.epsilon * self.epsilon_decay
+        )
+
+
+# ============================================================
+# Training
+# ============================================================
+
+def train_agent(
+    episodes=10000,
+    max_steps=30
+):
+
+    agent = QLearningAgent()
+
+    wins = 0
+    losses = 0
+
+    print("Training started...")
+    print("-" * 50)
+
+    for episode in range(1, episodes + 1):
+
+        env = SimplifiedChess()
+
+        state = env.reset()
+
+        episode_reward = 0
+
+        for step in range(max_steps):
+
+            actions = env.get_agent_actions()
+
+            if not actions:
+                losses += 1
+                break
+
+            action = agent.choose_action(
+                state,
+                actions
+            )
+
+            next_state, reward, done = env.step(action)
+
+            next_actions = (
+                env.get_agent_actions()
+                if not done
+                else []
+            )
+
+            agent.learn(
+                state,
+                action,
+                reward,
+                next_state,
+                next_actions,
+                done
+            )
+
+            state = next_state
+
+            episode_reward += reward
+
+            if done:
+
+                if reward > 0:
+                    wins += 1
+                else:
+                    losses += 1
+
+                break
+
+        agent.decay_epsilon()
+
+        # Print progress
+        if episode % 1000 == 0:
+
+            win_rate = (
+                wins / episode
+            ) * 100
+
+            print(
+                f"Episode: {episode:5d} | "
+                f"Wins: {wins:5d} | "
+                f"Losses: {losses:5d} | "
+                f"Win Rate: {win_rate:6.2f}% | "
+                f"Epsilon: {agent.epsilon:.3f}"
+            )
+
+    print("-" * 50)
+    print("Training completed.")
+
+    return agent
+
+
+# ============================================================
+# Test Trained Agent
+# ============================================================
+
+def test_agent(agent, games=5):
+
+    print("\n")
+    print("=" * 50)
+    print("TESTING TRAINED AGENT")
+    print("=" * 50)
+
+    wins = 0
+
+    for game in range(1, games + 1):
+
+        env = SimplifiedChess()
+
+        state = env.reset()
+
+        print(f"\nGame {game}")
+        env.display()
+
+        for move in range(1, 31):
+
+            actions = env.get_agent_actions()
+
+            if not actions:
+                print("No legal moves available.")
+                break
+
+            # Greedy action during testing
+            q_values = [
+                agent.q_table[
+                    (state, action)
+                ]
+                for action in actions
+            ]
+
+            best_index = q_values.index(
+                max(q_values)
+            )
+
+            action = actions[best_index]
+
+            print(
+                f"\nMove {move}: "
+                f"{action}"
+            )
+
+            next_state, reward, done = env.step(action)
+
+            env.display()
+
+            state = next_state
+
+            if done:
+
+                if reward > 0:
+
+                    print("Result: AGENT WINS!")
+                    wins += 1
+
+                else:
+
+                    print("Result: AGENT LOSES!")
+
+                break
+
+        else:
+
+            print("Result: DRAW / MOVE LIMIT REACHED.")
+
+    print("\n" + "=" * 50)
+    print(
+        f"Test Results: {wins}/{games} games won"
+    )
+    print("=" * 50)
+
+
+# ============================================================
+# Main Program
+# ============================================================
+
+if __name__ == "__main__":
+
+    # Train the agent
+    trained_agent = train_agent(
+        episodes=10000,
+        max_steps=30
+    )
+
+    # Test the learned policy
+    test_agent(
+        trained_agent,
+        games=5
+    )
