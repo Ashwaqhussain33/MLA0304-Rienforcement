@@ -1,0 +1,405 @@
+import numpy as np
+import random
+
+# ============================================================
+# SMART HOME ROBOT ENVIRONMENT
+# ============================================================
+
+class SmartHome:
+    def __init__(self):
+        self.rows = 5
+        self.cols = 5
+
+        # Start position of robot
+        self.start = (0, 0)
+
+        # Goal: charging station
+        self.goal = (4, 4)
+
+        # Obstacles / furniture
+        self.obstacles = {
+            (1, 1),
+            (1, 3),
+            (2, 3),
+            (3, 1)
+        }
+
+        # Actions
+        # 0 = Up
+        # 1 = Down
+        # 2 = Left
+        # 3 = Right
+        self.actions = {
+            0: (-1, 0),
+            1: (1, 0),
+            2: (0, -1),
+            3: (0, 1)
+        }
+
+        self.reset()
+
+    # --------------------------------------------------------
+    # Reset environment
+    # --------------------------------------------------------
+
+    def reset(self):
+        self.robot_position = self.start
+        return self.robot_position
+
+    # --------------------------------------------------------
+    # Check valid position
+    # --------------------------------------------------------
+
+    def is_valid(self, position):
+
+        r, c = position
+
+        return (
+            0 <= r < self.rows and
+            0 <= c < self.cols and
+            position not in self.obstacles
+        )
+
+    # --------------------------------------------------------
+    # Perform action
+    # --------------------------------------------------------
+
+    def step(self, action):
+
+        r, c = self.robot_position
+
+        dr, dc = self.actions[action]
+
+        new_position = (r + dr, c + dc)
+
+        # ----------------------------------------------------
+        # Robot hits wall or obstacle
+        # ----------------------------------------------------
+
+        if not self.is_valid(new_position):
+
+            reward = -5
+            done = False
+
+            return self.robot_position, reward, done
+
+        # Move robot
+        self.robot_position = new_position
+
+        # ----------------------------------------------------
+        # Robot reaches charging station
+        # ----------------------------------------------------
+
+        if self.robot_position == self.goal:
+
+            reward = 100
+            done = True
+
+            return self.robot_position, reward, done
+
+        # ----------------------------------------------------
+        # Normal movement
+        # ----------------------------------------------------
+
+        reward = -1
+        done = False
+
+        return self.robot_position, reward, done
+
+    # --------------------------------------------------------
+    # Display environment
+    # --------------------------------------------------------
+
+    def display(self):
+
+        print("\nSmart Home Grid")
+        print("----------------")
+
+        for r in range(self.rows):
+
+            row = []
+
+            for c in range(self.cols):
+
+                position = (r, c)
+
+                if position == self.robot_position:
+                    row.append("R")
+
+                elif position == self.goal:
+                    row.append("G")
+
+                elif position in self.obstacles:
+                    row.append("X")
+
+                else:
+                    row.append(".")
+
+            print(" ".join(row))
+
+        print()
+
+        print("R = Robot")
+        print("G = Charging Station")
+        print("X = Obstacle")
+        print(". = Free Space")
+
+
+# ============================================================
+# Q-LEARNING AGENT
+# ============================================================
+
+class QLearningAgent:
+
+    def __init__(
+        self,
+        rows,
+        cols,
+        actions=4,
+        learning_rate=0.1,
+        discount_factor=0.95,
+        epsilon=1.0,
+        epsilon_decay=0.995,
+        epsilon_min=0.01
+    ):
+
+        self.rows = rows
+        self.cols = cols
+        self.actions = actions
+
+        # Q-table
+        self.q_table = np.zeros(
+            (rows, cols, actions)
+        )
+
+        # Learning parameters
+        self.alpha = learning_rate
+        self.gamma = discount_factor
+
+        # Exploration parameters
+        self.epsilon = epsilon
+        self.epsilon_decay = epsilon_decay
+        self.epsilon_min = epsilon_min
+
+    # --------------------------------------------------------
+    # Choose action
+    # --------------------------------------------------------
+
+    def choose_action(self, state):
+
+        r, c = state
+
+        # Exploration
+        if random.random() < self.epsilon:
+
+            return random.randint(
+                0,
+                self.actions - 1
+            )
+
+        # Exploitation
+        return np.argmax(
+            self.q_table[r, c]
+        )
+
+    # --------------------------------------------------------
+    # Update Q-table
+    # --------------------------------------------------------
+
+    def learn(
+        self,
+        state,
+        action,
+        reward,
+        next_state,
+        done
+    ):
+
+        r, c = state
+
+        nr, nc = next_state
+
+        current_q = self.q_table[
+            r, c, action
+        ]
+
+        # If goal is reached
+        if done:
+
+            target = reward
+
+        else:
+
+            max_next_q = np.max(
+                self.q_table[nr, nc]
+            )
+
+            target = (
+                reward +
+                self.gamma * max_next_q
+            )
+
+        # Q-learning update
+        self.q_table[
+            r, c, action
+        ] = current_q + self.alpha * (
+            target - current_q
+        )
+
+    # --------------------------------------------------------
+    # Reduce exploration
+    # --------------------------------------------------------
+
+    def decay_epsilon(self):
+
+        self.epsilon = max(
+            self.epsilon_min,
+            self.epsilon * self.epsilon_decay
+        )
+
+
+# ============================================================
+# TRAINING FUNCTION
+# ============================================================
+
+def train_agent(episodes=5000):
+
+    environment = SmartHome()
+
+    agent = QLearningAgent(
+        rows=environment.rows,
+        cols=environment.cols
+    )
+
+    print("Training RL Agent...")
+    print("=" * 50)
+
+    for episode in range(1, episodes + 1):
+
+        state = environment.reset()
+
+        total_reward = 0
+
+        for step in range(100):
+
+            # Choose action
+            action = agent.choose_action(state)
+
+            # Interact with environment
+            next_state, reward, done = (
+                environment.step(action)
+            )
+
+            # Learn from experience
+            agent.learn(
+                state,
+                action,
+                reward,
+                next_state,
+                done
+            )
+
+            state = next_state
+
+            total_reward += reward
+
+            if done:
+                break
+
+        # Reduce exploration
+        agent.decay_epsilon()
+
+        # Display training progress
+        if episode % 500 == 0:
+
+            print(
+                f"Episode: {episode:4d} | "
+                f"Reward: {total_reward:4d} | "
+                f"Epsilon: {agent.epsilon:.3f}"
+            )
+
+    print("=" * 50)
+    print("Training completed!")
+
+    return agent, environment
+
+
+# ============================================================
+# TEST TRAINED AGENT
+# ============================================================
+
+def test_agent(agent, environment):
+
+    print("\n")
+    print("=" * 50)
+    print("TESTING TRAINED ROBOT")
+    print("=" * 50)
+
+    state = environment.reset()
+
+    environment.display()
+
+    total_reward = 0
+
+    for step in range(50):
+
+        r, c = state
+
+        # Select best learned action
+        action = np.argmax(
+            agent.q_table[r, c]
+        )
+
+        action_names = {
+            0: "UP",
+            1: "DOWN",
+            2: "LEFT",
+            3: "RIGHT"
+        }
+
+        print(
+            f"Step {step + 1}: "
+            f"{action_names[action]}"
+        )
+
+        next_state, reward, done = (
+            environment.step(action)
+        )
+
+        total_reward += reward
+
+        state = next_state
+
+        environment.display()
+
+        if done:
+
+            print(
+                "Robot reached the charging station!"
+            )
+
+            print(
+                f"Total Reward: {total_reward}"
+            )
+
+            return
+
+    print("Robot could not reach the goal.")
+
+
+# ============================================================
+# MAIN PROGRAM
+# ============================================================
+
+if __name__ == "__main__":
+
+    # Train the robot
+    agent, environment = train_agent(
+        episodes=5000
+    )
+
+    # Test learned navigation
+    test_agent(
+        agent,
+        environment
+    )
